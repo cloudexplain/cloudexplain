@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloudexplain"
-version = "0.0.1"
-description = "A package for explaining cloud-based solutions."
+version = "0.1.0"
+description = "A package for explaining cloud-based solutions provided by cloudexplain GmbH."
 authors = [
     { name = "cloudexplain", email = "info@cloudexplain.eu" }
 ]
@@ -19,7 +19,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/cloudexplain/cloudexplain"
+Homepage = "https://www.cloudexplain.eu"
 Repository = "https://github.com/cloudexplain/cloudexplain"
 
 [project.optional-dependencies]
@@ -28,4 +28,29 @@ azure = [
     "azure-mgmt-resource",
     "azure-mgmt-storage",
     "azure-storage-blob",
+]
+
+sklearn = [
+    "scikit-learn",
+]
+
+xgboost = [
+    "xgboost",
+]
+
+catboost = [
+    "catboost",
+]
+
+lightgbm = [
+    "lightgbm",
+]
+
+pytorch = [
+    "torch",
+    "torchvision",
+]
+
+tensorflow = [
+    "tensorflow",
 ]

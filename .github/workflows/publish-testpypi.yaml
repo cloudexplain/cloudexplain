@@ -23,7 +23,7 @@ jobs:
         pip install setuptools wheel twine
 
     - name: Build package
-      run: python -m bulid
+      run: python -m build
 
     - name: Publish package to Test PyPI
       env:

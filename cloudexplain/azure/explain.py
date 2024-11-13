@@ -8,6 +8,7 @@ import pickle
 import json
 import asyncio
 import threading
+from typing import Any
 
 credentials = AzureCliCredential()
 
@@ -122,7 +123,7 @@ def explain(model, X, y, model_version: str = None, model_description: str = Non
     ```
 
     Args:
-        model (_type_): _description_
+        model (Any): Any model that can be pickled and explained.
         X (_type_): _description_
         y (_type_): _description_
         model_version (str, optional): _description_. Defaults to None.

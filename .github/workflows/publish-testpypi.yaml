@@ -29,4 +29,4 @@ jobs:
       env:
         TWINE_USERNAME: ${{ secrets.TEST_PYPI_USERNAME }}
         TWINE_PASSWORD: ${{ secrets.TEST_PYPI_PASSWORD }}
-      run: twine upload --repository-url https://test.pypi.org/cloudexplain/ dist/*
+      run: twine upload --repository-url https://test.pypi.org/legacy/ dist/*

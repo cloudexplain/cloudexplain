@@ -85,7 +85,15 @@ async def _upload_blobs_async(container_client, directory_name, X, y, model, mod
 
 
 class ExplainModelContext:
-    def __init__(self, model, X, y, model_version=None, model_description=None, resource_group_name: str | None = None):
+    def __init__(self,
+                 model,
+                 X,
+                 y,
+                 model_version=None,
+                 model_description=None,
+                 resource_group_name: str | None = None,
+                 explanation_env: str | None = "prod",
+                 explanation_name: str | None = None):
         self.model = model
         self.X = X
         self.y = y
@@ -93,7 +101,13 @@ class ExplainModelContext:
         self.model_description = model_description
         self.container_client = get_data_container_client(resource_group_name=resource_group_name)
         self.directory_name = f"explanation_{str(uuid.uuid4())}"
-        self.model_metadata = create_model_metadata(model, X, y, model_version=model_version, model_description=model_description)
+        self.model_metadata = create_model_metadata(model,
+                                                    X,
+                                                    y,
+                                                    model_version=model_version,
+                                                    model_description=model_description,
+                                                    explanation_name=explanation_name,
+                                                    explanation_env=explanation_env)
         self.upload_thread = None
 
     def __enter__(self):
@@ -110,7 +124,14 @@ class ExplainModelContext:
     def _start_upload(self):
         asyncio.run(_upload_blobs_async(self.container_client, self.directory_name, self.X, self.y, self.model, self.model_metadata))
 
-def explain(model, X, y, model_version: str = None, model_description: str = None, resource_group_name: str | None = None):
+def explain(model,
+            X,
+            y,
+            model_version: str = None,
+            model_description: str = None,
+            resource_group_name: str | None = None,
+            explanation_env: str | None = "prod",
+            explanation_name: str | None = None):
     """Upload the model, data, and metadata to the cloudexplaindata container asynchronously.
 
     Usage:
@@ -129,9 +150,18 @@ def explain(model, X, y, model_version: str = None, model_description: str = Non
         model_version (str, optional): _description_. Defaults to None.
         model_description (str, optional): _description_. Defaults to None.
         resource_group_name (str, optional): _description_. Defaults to None.
+        explanation_env (str, optional): The environment in which the explanation takes place. Typicall for model development one chooses "dev", for productive runs "prod". Defaults to "prod".
+        explanation_name (str, optional): The name of the explanation. Under this name the explanation will be stored in the database and be viewable in the cloudexplain dashboard. Defaults to None.
 
     Returns:
         _type_: _description_
     """
-    return ExplainModelContext(model, X, y, model_version=model_version, model_description=model_description, resource_group_name=resource_group_name)
+    return ExplainModelContext(model,
+                               X,
+                               y,
+                               model_version=model_version,
+                               model_description=model_description,
+                               resource_group_name=resource_group_name,
+                               explanation_env=explanation_env,
+                               explanation_name=explanation_name)
 

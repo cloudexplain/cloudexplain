@@ -9,6 +9,7 @@ import json
 import asyncio
 import threading
 from typing import Any
+import logging
 
 credentials = AzureCliCredential()
 
@@ -100,7 +101,9 @@ class ExplainModelContext:
         self.model_version = model_version
         self.model_description = model_description
         self.container_client = get_data_container_client(resource_group_name=resource_group_name)
-        self.directory_name = f"explanation_{str(uuid.uuid4())}"
+        self.run_uuid = str(uuid.uuid4())
+        logging.info(f"Starting explanation run with uuid {self.run_uuid}")
+        self.directory_name = f"explanation_{self.run_uuid}"
         self.model_metadata = create_model_metadata(model,
                                                     X,
                                                     y,
@@ -114,7 +117,7 @@ class ExplainModelContext:
         # Start the upload in a separate thread
         self.upload_thread = threading.Thread(target=self._start_upload)
         self.upload_thread.start()
-        return self.model
+        return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         # Wait for the upload to complete

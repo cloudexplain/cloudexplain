@@ -12,6 +12,30 @@ In order to run it on azure you must have write rights on the `cloudexplainmodel
 az login
 ```
 
+#### Example Usage
+
+```python
+import shap
+import sklearn
+import cloudexplain
+
+X, y = shap.datasets.adult(n_points=100)
+dtc = sklearn.tree.DecisionTreeClassifier()
+dtc.fit(X, y)
+
+
+with cloudexplain.azure.explain(dtc,
+                                X,
+                                y,
+                                model_version="0.0.1",
+                                model_description="This is a new model.",
+                                resource_group_name="mycomp-cloudexplain-tf",
+                                explanation_name="dummy_name",
+                                explanation_env="dev") as run:
+    print("This is the run uuid", run.run_uuid)
+    pred = dtc.predict(X)
+```
+
 
 #### Troubleshooting
 When logged in with multiple accounts it can be the case that the permissions are not handled correctly. Signing out of all users

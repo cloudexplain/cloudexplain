@@ -3,6 +3,7 @@ from typing import TypedDict
 
 class ModelMetadata(TypedDict):
     model_name: str
+    model_type: str
     model_description: str
     model_version: str
     model_framework: str
@@ -18,24 +19,23 @@ def create_model_metadata(model: object,
                           y,
                           model_version: str=None,
                           model_description: str = None,
-                          explanation_name: str | None = None,
-                          explanation_env: str | None = "prod") -> ModelMetadata:
+                          model_name: str = None,
+                          ) -> ModelMetadata:
     model_class_name = model.__class__.__name__
     model_module = model.__class__.__module__
 
     model_metadata = {
-            "model_name": model_class_name,
+            "model_name": model_name,
+            "model_type": model_class_name,
             "model_description": model_description,
             "model_version": model_version,
-            # "model_type": model_type,  # todo: check if regression, classification, multi-class, etc.
+            # "ml_type": ml_type,  # todo: check if regression, classification, multi-class, etc.
             "model_runtime": "python",
             "model_runtime_version": sys.version,
             "model_output_dimension": y.shape[1] if len(y.shape) > 1 else 1,
             "model_input_dimension": X.shape[-1],
             # todo: change this if this is a more difficult model
             "feature_names": list(X.columns),
-            "explanation_name": explanation_name,
-            "explanation_env": explanation_env
     }
 
     if "sklearn" in model_module:

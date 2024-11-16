@@ -20,6 +20,7 @@ import sklearn
 import cloudexplain
 
 X, y = shap.datasets.adult(n_points=100)
+X["adult_id"] = list(range(len(X)))
 dtc = sklearn.tree.DecisionTreeClassifier()
 dtc.fit(X, y)
 
@@ -31,7 +32,9 @@ with cloudexplain.azure.explain(dtc,
                                 model_description="This is a new model.",
                                 resource_group_name="mycomp-cloudexplain-tf",
                                 explanation_name="dummy_name",
-                                explanation_env="dev") as run:
+                                explanation_env="dev",
+                                data_source="shap_adult_dataset",
+                                observation_id_column="adult_id") as run:
     print("This is the run uuid", run.run_uuid)
     pred = dtc.predict(X)
 ```

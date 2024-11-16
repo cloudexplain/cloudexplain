@@ -79,10 +79,13 @@ def get_data_container_client(resource_group_name: str | None) -> BlobServiceCli
 async def _upload_files_async(container_client, directory_name, data, file_name):
     container_client.upload_blob(f"{directory_name}/{file_name}", data, overwrite=True, encoding='utf-8')
 
-async def _upload_blobs_async(container_client, directory_name, X, y, model, model_metadata):
-    await _upload_files_async(container_client=container_client, directory_name=directory_name, file_name="data.pickle", data=pickle.dumps((X, y)))
-    await _upload_files_async(container_client=container_client, directory_name=directory_name, file_name="model.pickle", data=pickle.dumps(model))
-    await _upload_files_async(container_client=container_client, directory_name=directory_name, file_name="model_metadata.json", data=json.dumps(model_metadata))
+async def _upload_blobs_async(container_client, directory_name, X, y, model, model_metadata, run_metadata):
+    await asyncio.gather(
+        _upload_files_async(container_client=container_client, directory_name=directory_name, file_name="data.pickle", data=pickle.dumps((X, y))),
+        _upload_files_async(container_client=container_client, directory_name=directory_name, file_name="model.pickle", data=pickle.dumps(model)),
+        _upload_files_async(container_client=container_client, directory_name=directory_name, file_name="model_metadata.json", data=json.dumps(model_metadata))
+    )
+    await _upload_files_async(container_client=container_client, directory_name=directory_name, file_name="run_metadata.json", data=json.dumps(run_metadata))
 
 
 class ExplainModelContext:
@@ -90,14 +93,18 @@ class ExplainModelContext:
                  model,
                  X,
                  y,
+                 model_name: str | None = None,
                  model_version=None,
                  model_description=None,
                  resource_group_name: str | None = None,
                  explanation_env: str | None = "prod",
-                 explanation_name: str | None = None):
+                 explanation_name: str | None = None,
+                 data_source: str | None = None,
+                 observation_id_column: str | None = None):
         self.model = model
         self.X = X
         self.y = y
+        self.model_name = model_name
         self.model_version = model_version
         self.model_description = model_description
         self.container_client = get_data_container_client(resource_group_name=resource_group_name)
@@ -107,10 +114,16 @@ class ExplainModelContext:
         self.model_metadata = create_model_metadata(model,
                                                     X,
                                                     y,
+                                                    model_name=model_name,
                                                     model_version=model_version,
                                                     model_description=model_description,
-                                                    explanation_name=explanation_name,
-                                                    explanation_env=explanation_env)
+                                                    )
+        self.run_metadata = {"data_source": data_source,
+                             "observation_id_column": observation_id_column,
+                             "explanation_env": explanation_env,
+                             "explanation_name": explanation_name,
+                             "run_uuid": self.run_uuid,
+                             }
         self.upload_thread = None
 
     def __enter__(self):
@@ -125,16 +138,19 @@ class ExplainModelContext:
             self.upload_thread.join()
 
     def _start_upload(self):
-        asyncio.run(_upload_blobs_async(self.container_client, self.directory_name, self.X, self.y, self.model, self.model_metadata))
+        asyncio.run(_upload_blobs_async(self.container_client, self.directory_name, self.X, self.y, self.model, self.model_metadata, self.run_metadata))
 
 def explain(model,
             X,
             y,
+            model_name: str = None,
             model_version: str = None,
             model_description: str = None,
             resource_group_name: str | None = None,
             explanation_env: str | None = "prod",
-            explanation_name: str | None = None):
+            explanation_name: str | None = None,
+            data_source: str | None = None,
+            observation_id_column: str | None = None) -> ExplainModelContext:
     """Upload the model, data, and metadata to the cloudexplaindata container asynchronously.
 
     Usage:
@@ -150,11 +166,14 @@ def explain(model,
         model (Any): Any model that can be pickled and explained.
         X (_type_): _description_
         y (_type_): _description_
+        model_name (str, optional): Name of the used model. Defaults to None.
         model_version (str, optional): _description_. Defaults to None.
         model_description (str, optional): _description_. Defaults to None.
         resource_group_name (str, optional): _description_. Defaults to None.
         explanation_env (str, optional): The environment in which the explanation takes place. Typicall for model development one chooses "dev", for productive runs "prod". Defaults to "prod".
         explanation_name (str, optional): The name of the explanation. Under this name the explanation will be stored in the database and be viewable in the cloudexplain dashboard. Defaults to None.
+        data_source (str, optional): The source of the data. Runs on the same source can be compared against each other. Defaults to None.
+        observation_id_column (str, optional): A column in X that refers that marks a unique identifier of the observation/row. If provided the explanation of the given row will be accessible by this id. Defaults to None.
 
     Returns:
         _type_: _description_
@@ -162,9 +181,12 @@ def explain(model,
     return ExplainModelContext(model,
                                X,
                                y,
+                               model_name=model_name,
                                model_version=model_version,
                                model_description=model_description,
                                resource_group_name=resource_group_name,
                                explanation_env=explanation_env,
-                               explanation_name=explanation_name)
+                               explanation_name=explanation_name,
+                               data_source=data_source,
+                               observation_id_column=observation_id_column)
 

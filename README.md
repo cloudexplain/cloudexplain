@@ -33,7 +33,7 @@ with cloudexplain.azure.explain(dtc,
                                 resource_group_name="mycomp-cloudexplain-tf",
                                 explanation_name="dummy_name",
                                 explanation_env="dev",
-                                data_source"shap_adult_dataset",
+                                data_source="shap_adult_dataset",
                                 observation_id_column="adult_id") as run:
     print("This is the run uuid", run.run_uuid)
     pred = dtc.predict(X)

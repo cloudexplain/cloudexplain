@@ -20,6 +20,7 @@ def create_model_metadata(model: object,
                           model_version: str=None,
                           model_description: str = None,
                           model_name: str = None,
+                          model_hash: str = None,
                           ) -> ModelMetadata:
     model_class_name = model.__class__.__name__
     model_module = model.__class__.__module__
@@ -36,6 +37,7 @@ def create_model_metadata(model: object,
             "model_input_dimension": X.shape[-1],
             # todo: change this if this is a more difficult model
             "feature_names": list(X.columns),
+            "model_hash": model_hash,
     }
 
     if "sklearn" in model_module:

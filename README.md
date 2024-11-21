@@ -13,6 +13,9 @@ az login
 ```
 
 #### Example Usage
+##### Training mode
+
+In training mode you need to specify the `y` argument.
 
 ```python
 import shap
@@ -25,9 +28,9 @@ dtc = sklearn.tree.DecisionTreeClassifier()
 dtc.fit(X, y)
 
 
-with cloudexplain.azure.explain(dtc,
-                                X,
-                                y,
+with cloudexplain.azure.explain(model=dtc,
+                                X=X,
+                                y=y,
                                 model_version="0.0.1",
                                 model_description="This is a new model.",
                                 resource_group_name="mycomp-cloudexplain-tf",
@@ -39,6 +42,23 @@ with cloudexplain.azure.explain(dtc,
     pred = dtc.predict(X)
 ```
 
+##### Inference mode
+
+To run in inference mode, just don't specify `y`.
+
+```python
+with cloudexplain.azure.explain(model=dtc,
+                                X=X,
+                                model_version="0.0.1",
+                                model_description="This is a new model.",
+                                resource_group_name="mycomp-cloudexplain-tf",
+                                explanation_name="dummy_name",
+                                explanation_env="dev",
+                                data_source="shap_adult_dataset",
+                                observation_id_column="adult_id") as run:
+    print("This is the run uuid", run.run_uuid)
+    pred = dtc.predict(X)
+```
 
 #### Troubleshooting
 When logged in with multiple accounts it can be the case that the permissions are not handled correctly. Signing out of all users

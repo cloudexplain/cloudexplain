@@ -1,1 +1,1 @@
-from cloudexplain.azure.explain import get_data_container_client
+from cloudexplain.azure.explain import explain

@@ -66,3 +66,5 @@ except for the one who has the correct rights helps.
 ```bash
 az logout
 ```
+
+If `AuthorizationPermissionMismatch` is raised for a newly spun up cloudexplain resource, try logging out and in again. This refreshes azure privileges and should resolve the issue.

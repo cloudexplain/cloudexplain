@@ -56,3 +56,15 @@ pytorch = [
 tensorflow = [
     "tensorflow",
 ]
+
+test = [
+    "scikit-learn",
+    "xgboost",
+    "catboost",
+    "lightgbm",
+    "torch",
+    "torchvision",
+    "tensorflow",
+    "shap",         # We use this for the datasets
+    "pytest"
+]

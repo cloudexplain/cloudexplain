@@ -14,9 +14,19 @@ import logging
 import hashlib
 import uuid
 from cloudexplain.azure.utils import get_or_create_folders_recursively
+from typing import Literal
+from enum import Enum
 
 credentials = AzureCliCredential()
 
+class MLType(Enum):
+    BINARY_CLASSIFICATION = "binary_classification"
+    MULTICLASS_CLASSIFICATION = "multiclass_classification"
+    REGRESSION = "regression"
+    MULTI_OUTPUT_REGRESSION = "multi_output_regression"
+    TEXT_GENERATION = "text_generation"
+    IMAGE_CLASSIFICATION = "image_classification"
+    IMAGE_GENERATION = "image_generation"
 
 NAME_PATTERN_RG = "cloudexplain"
 NAME_PATTERN_STORAGE_ACC = "cloudexplainmodels"
@@ -73,6 +83,8 @@ def find_storage_account_name(resource_group_name: str | None):
     subscription_id = get_subscription_id(credentials=credentials)
 
     account = _find_cloudexplain_storage_acc(subscription_id=subscription_id, credentials=credentials, cloudexplain_rg=cloudexplain_rg)
+    if account is None:
+        raise Exception(f"No storage account with name {NAME_PATTERN_STORAGE_ACC} found. Please specify a resource_group using the argument {resource_group_name}.")
     return account
 
 def get_container_client(container_name: str, resource_group_name: str | None = None) -> BlobServiceClient:
@@ -117,6 +129,7 @@ async def _upload_blobs_async(data_container_client,
                               model_metadata: Optional[dict],
                               run_metadata,
                               y=None,
+                              baseline_data=None,
                               observation_id_column=None,
                               ):
     jobs = [_upload_files_async(container_client=data_container_client, directory_name=directory_name, file_name="data.pickle", data=pickle.dumps((X, y))),
@@ -125,16 +138,18 @@ async def _upload_blobs_async(data_container_client,
         model_name = model_metadata["model_name"]
         model_version = model_metadata["model_version"]
         jobs.extend([_upload_create_folder_files_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model.pickle", data=dumped_model),
-                     _upload_create_folder_files_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model_metadata.json", data=json.dumps(model_metadata))
+                     _upload_create_folder_files_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model_metadata.json", data=json.dumps(model_metadata, ensure_ascii=False))
                      ]
                     )
     if observation_id_column is not None:
         jobs.append(_upload_files_async(container_client=data_container_client, directory_name=directory_name, file_name="observation_id_column.pickle", data=pickle.dumps(observation_id_column)))
+    if baseline_data is not None:
+        jobs.append(_upload_files_async(container_client=data_container_client, directory_name=directory_name, file_name="baseline_data.pickle", data=pickle.dumps(baseline_data)))
 
     await asyncio.gather(
         *jobs
     )
-    await _upload_files_async(container_client=data_container_client, directory_name=directory_name, file_name="run_metadata.json", data=json.dumps(run_metadata))
+    await _upload_files_async(container_client=data_container_client, directory_name=directory_name, file_name="run_metadata.json", data=json.dumps(run_metadata, ensure_ascii=False))
 
 def list_sub_directories(directory_client):
     sub_directories = [path.name for path in directory_client.get_paths() if path.is_directory]
@@ -145,21 +160,50 @@ class ExplainModelContext:
     def __init__(self,
                  model,
                  X: Union["pandas.DataFrame", "numpy.ndarray"],
+                 ml_type: Literal["binary_classification",
+                                         "multiclass_classification",
+                                         "regression",
+                                         "multi_output_regression",
+                                         "text_generation",
+                                         "image_classification",
+                                         "image_generation"] | MLType,
+                 model_name: str,
+                 model_version: str,
+                 explanation_name: str,
+                 data_source: str,
                  y: Optional[Union["pandas.DataFrame", "numpy.ndarray"]] = None,
-                 model_name: str | None = None,
-                 model_version=None,
-                 model_description=None,
-                 resource_group_name: str | None = None,
-                 explanation_env: str | None = "prod",
-                 explanation_name: str | None = None,
-                 data_source: str | None = None,
-                 observation_id_column: Optional[Union[list[Union[int, str]], "pandas.Series", "numpy.ndarray"]] = None):
+                 model_description: str = None,
+                 resource_group_name: Optional[str] = None,
+                 explanation_env: Optional[str] = "prod",
+                 observation_id_column: Optional[Union[list[Union[int, str]], "pandas.Series", "numpy.ndarray"]] = None,
+                 observation_entity: Optional[str] = None,
+                 output_unit: Optional[str] = None,
+                 feature_units: Optional[dict[str, str]] = None,
+                 is_higher_output_better: Union[bool, tuple[bool]] = True,
+                 feature_display_name_map: Optional[dict[str, str]] = None,
+                 feature_description_map: Optional[dict[str, str]] = None,
+                 baseline_data: Optional[Union["pandas.DataFrame", "numpy.ndarray"]] = None,
+                 ):
+        try:
+            if isinstance(ml_type, str):
+                ml_type = MLType(ml_type)
+        except ValueError as e:
+            raise ValueError(f"ml_type must be one of {', '.join([ml_type.value for ml_type in MLType])}.") from e
         self.model = model
         self.X = X
         self.y = y
         self.model_name = model_name
         self.model_version = model_version
         self.model_description = model_description
+        self.ml_type = ml_type.value
+
+        self.observation_entity = observation_entity
+        self.output_unit =  output_unit
+        self.feature_units = feature_units
+        self.is_higher_output_better = is_higher_output_better
+        self.feature_display_name_map = feature_display_name_map
+        self.feature_description_map = feature_description_map
+        self.baseline_data = baseline_data
 
         # get container clients -> todo: use file clients instead
         self.data_container_client = get_container_client(resource_group_name=resource_group_name, container_name=DATA_CONTAINER_NAME)
@@ -205,10 +249,17 @@ class ExplainModelContext:
                              "observation_id_column_provided": True if self.observation_id_column is not None else False,
                              "explanation_env": self.explanation_env,
                              "explanation_name": self.explanation_name,
+                             "X_shape": self.X.shape,
                              "run_uuid": self.run_uuid,
                              "run_mode": "inference" if self.y is None else "training",
                              "model_name": self.model_name,
                              "model_version": self.model_version,
+                             "observation_entity": self.observation_entity,
+                             "output_unit": self.output_unit,
+                             "feature_units": self.feature_units,
+                             "is_higher_output_better": self.is_higher_output_better,
+                             "feature_display_name_map": self.feature_display_name_map,
+                             "feature_description_map": self.feature_description_map,
                              }
 
         if self.run_metadata["run_mode"] == "training":
@@ -219,12 +270,14 @@ class ExplainModelContext:
                                                         model_version=self.model_version,
                                                         model_description=self.model_description,
                                                         model_hash=model_hash,
+                                                        ml_type=self.ml_type
                                                         )
         asyncio.run(_upload_blobs_async(data_container_client=self.data_container_client,
                                         model_container_client=self.fsc,
                                         directory_name=self.directory_name,
                                         X=self.X,
                                         y=self.y,
+                                        baseline_data=self.baseline_data,
                                         dumped_model=dumped_model,
                                         model_metadata=self.model_metadata,
                                         run_metadata=self.run_metadata,
@@ -234,15 +287,29 @@ class ExplainModelContext:
 
 def explain(model,
             X: Union["pandas.DataFrame", "numpy.ndarray"],
+            model_name: str,
+            model_version: str,
+            explanation_name: str,
+            data_source: str,
+            ml_type: Literal["binary_classification",
+                             "multiclass_classification",
+                             "regression",
+                             "multi_output_regression",
+                             "text_generation",
+                             "image_classification",
+                             "image_generation"],
             y: Optional[Union["pandas.DataFrame", "numpy.ndarray"]] = None,
-            model_name: str = None,
-            model_version: str = None,
             model_description: str = None,
             resource_group_name: str | None = None,
             explanation_env: str | None = "prod",
-            explanation_name: str | None = None,
-            data_source: str | None = None,
-            observation_id_column: str | None = None) -> ExplainModelContext:
+            observation_id_column: str | None = None,
+            observation_entity: str | None = None,
+            output_unit: str | None = None,
+            feature_units: dict[str, str] | None = None,
+            is_higher_output_better: bool | tuple[bool] = True,
+            feature_display_name_map: dict[str, str] | None = None,
+            feature_description_map: dict[str, str] | None = None,
+            baseline_data: Optional[Union["pandas.DataFrame", "numpy.ndarray"]] = None) -> ExplainModelContext:
     """Upload the model, data, and metadata to the cloudexplaindata container asynchronously.
 
     Usage:
@@ -266,13 +333,27 @@ def explain(model,
         explanation_name (str, optional): The name of the explanation. Under this name the explanation will be stored in the database and be viewable in the cloudexplain dashboard. Defaults to None.
         data_source (str, optional): The source of the data. Runs on the same source can be compared against each other. Defaults to None.
         observation_id_column (str, optional): A column in X that refers that marks a unique identifier of the observation/row. If provided the explanation of the given row will be accessible by this id. Defaults to None.
-
-    Returns:
-        _type_: _description_
+        ml_type (Literal, optional): The type of the machine learning model. Defaults to None. One of "binary_classification", "multiclass_classification", "regression", "multi_output_regression", "text_generation", "image_classification", "image_generation".
+        observation_entity: str, optional
+            The entity of an observation. Answers the question what an observation represents. For instance for a churn use case this might be "customer", for the california housing dataset "house", for iris "plant". This can be None if not applicable or required.
+        output_unit: str, optional
+            The unit of measurement for the output (e.g., percent, dollars, meters, pounds). If the output is a simple count, we advise to leave this empty. This can be None if there is no specific unit.
+        feature_units: dict[str, str], optional
+            A dictionary mapping feature names to their respective units of measurement. For example, {'feature1': 'meters', 'feature2': 'dollars', 'feature3': 'months'}. This can be None.
+        is_higher_output_better : bool, tuple[bool]
+            A boolean (or tuple of boolean in case of multi-output models) indicating whether higher values of the output are considered better (defaults to True). In case of multi output models this should be a tuple of booleans, e.g. (true, false, true).
+        feature_display_name_map : dict[str, str], optional
+            A dictionary mapping internal feature names to display names for presentation purposes. For example, {'feature1': 'Feature One', 'feature2': 'Feature Two'}. This can be None.
+        feature_description_map : dict[str, str], optional
+            A dictionary providing descriptions for each feature. This can help in understanding the role and details of each feature. For example, {'feature1': 'This feature represents ...', 'feature2': 'This feature indicates ...'}. This can be None.
+        baseline_data: pandas.DataFrame, numpy.ndarray, optional
+            The baseline data that is used to explain the model. This can be None.
+        Returns:
+            ExplainModelContext: The context manager that uploads the model, data, and metadata to the cloudexplaindata container asynchronously.
     """
-    return ExplainModelContext(model,
-                               X,
-                               y,
+    return ExplainModelContext(model=model,
+                               X=X,
+                               y=y,
                                model_name=model_name,
                                model_version=model_version,
                                model_description=model_description,
@@ -280,5 +361,13 @@ def explain(model,
                                explanation_env=explanation_env,
                                explanation_name=explanation_name,
                                data_source=data_source,
-                               observation_id_column=observation_id_column)
-
+                               observation_id_column=observation_id_column,
+                               ml_type=ml_type,
+                               observation_entity=observation_entity,
+                               output_unit=output_unit,
+                               feature_units=feature_units,
+                               is_higher_output_better=is_higher_output_better,
+                               feature_display_name_map=feature_display_name_map,
+                               feature_description_map=feature_description_map,
+                               baseline_data=baseline_data
+    )

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloudexplain"
-version = "0.1.0rc5"
+version = "0.1.0rc6"
 description = "A package for explaining cloud-based solutions provided by cloudexplain GmbH."
 authors = [
     { name = "cloudexplain", email = "info@cloudexplain.eu" }

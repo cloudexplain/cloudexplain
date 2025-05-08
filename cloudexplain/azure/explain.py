@@ -180,8 +180,7 @@ class ExplainModelContext:
                  output_unit: Optional[str] = None,
                  feature_units: Optional[dict[str, str]] = None,
                  is_higher_output_better: Union[bool, tuple[bool]] = True,
-                 feature_display_name_map: Optional[dict[str, str]] = None,
-                 feature_description_map: Optional[dict[str, str]] = None,
+                 feature_descriptions: Optional[dict[str, str]] = None,
                  baseline_data: Optional[Union["pandas.DataFrame", "numpy.ndarray"]] = None,
                  ):
         try:
@@ -201,8 +200,14 @@ class ExplainModelContext:
         self.output_unit =  output_unit
         self.feature_units = feature_units
         self.is_higher_output_better = is_higher_output_better
-        self.feature_display_name_map = feature_display_name_map
-        self.feature_description_map = feature_description_map
+        self.feature_descriptions = feature_descriptions
+        if feature_descriptions is None:
+            self.feature_display_name_map= dict()
+            self.feature_description_map = dict()
+        else:
+            self.feature_display_name_map = {k: v['display_description'] for k, v in feature_descriptions.items() if v.get("display_description")}
+            self.feature_description_map = {k: v['description'] for k, v in feature_descriptions.items() if v.get("description")}
+        self.feature_descriptions = feature_descriptions
         self.baseline_data = baseline_data
 
         # get container clients -> todo: use file clients instead
@@ -260,6 +265,7 @@ class ExplainModelContext:
                              "is_higher_output_better": self.is_higher_output_better,
                              "feature_display_name_map": self.feature_display_name_map,
                              "feature_description_map": self.feature_description_map,
+                             "feature_descriptions": self.feature_descriptions
                              }
 
         if self.run_metadata["run_mode"] == "training":
@@ -307,8 +313,7 @@ def explain(model,
             output_unit: str | None = None,
             feature_units: dict[str, str] | None = None,
             is_higher_output_better: bool | tuple[bool] = True,
-            feature_display_name_map: dict[str, str] | None = None,
-            feature_description_map: dict[str, str] | None = None,
+            feature_descriptions: dict[str, str] | None = None,
             baseline_data: Optional[Union["pandas.DataFrame", "numpy.ndarray"]] = None) -> ExplainModelContext:
     """Upload the model, data, and metadata to the cloudexplaindata container asynchronously.
 
@@ -342,10 +347,12 @@ def explain(model,
             A dictionary mapping feature names to their respective units of measurement. For example, {'feature1': 'meters', 'feature2': 'dollars', 'feature3': 'months'}. This can be None.
         is_higher_output_better : bool, tuple[bool]
             A boolean (or tuple of boolean in case of multi-output models) indicating whether higher values of the output are considered better (defaults to True). In case of multi output models this should be a tuple of booleans, e.g. (true, false, true).
-        feature_display_name_map : dict[str, str], optional
-            A dictionary mapping internal feature names to display names for presentation purposes. For example, {'feature1': 'Feature One', 'feature2': 'Feature Two'}. This can be None.
-        feature_description_map : dict[str, str], optional
-            A dictionary providing descriptions for each feature. This can help in understanding the role and details of each feature. For example, {'feature1': 'This feature represents ...', 'feature2': 'This feature indicates ...'}. This can be None.
+        feature_descriptions : dict[str, str], optional
+            A dictionary providing descriptions for each feature. This can help in understanding the role and details of each feature.
+            For example, {'feature1': {'is_categorical': True, 'description': 'This feature represents ...', 'display_description': 'Describes correlation', "encoding": {"feature_val1": 0, "feature_val2": 1, ...}},
+                          'feature2': {'is_categorical': False, ...}
+                          }
+            'is_categorical', 'description' and 'display_description' are mandatory fields.
         baseline_data: pandas.DataFrame, numpy.ndarray, optional
             The baseline data that is used to explain the model. This can be None.
         Returns:
@@ -367,7 +374,6 @@ def explain(model,
                                output_unit=output_unit,
                                feature_units=feature_units,
                                is_higher_output_better=is_higher_output_better,
-                               feature_display_name_map=feature_display_name_map,
-                               feature_description_map=feature_description_map,
+                               feature_descriptions=feature_descriptions,
                                baseline_data=baseline_data
     )

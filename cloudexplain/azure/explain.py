@@ -172,8 +172,8 @@ async def _upload_blobs_async(data_container_client,
     if run_metadata["run_mode"] == "training":
         model_name = model_metadata["model_name"]
         model_version = model_metadata["model_version"]
-        jobs.extend([_upload_create_folder_files_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model.pickle", data=dumped_model),
-                     _upload_create_folder_files_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model_metadata.json", data=json.dumps(model_metadata, ensure_ascii=False))
+        jobs.extend([_upload_blob_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model.pickle", data=dumped_model),
+                     _upload_blob_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model_metadata.json", data=json.dumps(model_metadata, ensure_ascii=False))
                      ]
                     )
     if observation_id_column is not None:
@@ -190,6 +190,22 @@ def list_sub_directories(directory_client):
     sub_directories = [path.name for path in directory_client.get_paths() if path.is_directory]
     return sub_directories
 
+def get_container_client_from_sas(sas_url: str, container_name: str) -> BlobServiceClient:
+    """Get a container client from a SAS URL."""
+    # Convert Data Lake SAS URL to Blob Storage SAS URL
+    sas_url = sas_url.replace('.dfs.core.windows.net', '.blob.core.windows.net')
+
+    blob_service_client = BlobServiceClient(account_url=sas_url, credential=None)
+    return blob_service_client.get_container_client(container_name)
+
+def get_file_system_client_from_sas(sas_url: str, container_name: str) -> FileSystemClient:
+    """Get a file system client from a SAS URL for Data Lake operations."""
+    # Ensure we're using the Data Lake endpoint
+    if '.blob.core.windows.net' in sas_url:
+        sas_url = sas_url.replace('.blob.core.windows.net', '.dfs.core.windows.net')
+    
+    datalake_service_client = DataLakeServiceClient(account_url=sas_url, credential=None)
+    return datalake_service_client.get_file_system_client(container_name)
 
 class ExplainModelContext:
     def __init__(self,
@@ -261,16 +277,12 @@ class ExplainModelContext:
             # Parse the JSON response correctly
             response_data = response.json()
             data_sas_url = response_data["data_sas_url"]
+
+            self.data_container_client = get_container_client_from_sas(sas_url=data_sas_url, container_name=DATA_CONTAINER_NAME)
+            self.model_container_client = get_container_client_from_sas(sas_url=data_sas_url, container_name=MODEL_CONTAINER_NAME)
             
-            # Create blob service clients from SAS URLs
-            datalake_service_client = DataLakeServiceClient(data_sas_url)
-            
-            # Create container clients that match the interface expected by the rest of the code
-            self.data_container_client = datalake_service_client.get_file_system_client(DATA_CONTAINER_NAME)
-            self.model_container_client = datalake_service_client.get_file_system_client(MODEL_CONTAINER_NAME)
-            
-            # Create file system client for models
-            self.fsc = datalake_service_client.get_file_system_client(MODEL_CONTAINER_NAME)
+            # Create file system client from SAS URL for Data Lake operations
+            self.fsc = get_file_system_client_from_sas(sas_url=data_sas_url, container_name=MODEL_CONTAINER_NAME)
         else:
             self.data_container_client = get_container_client(resource_group_name=resource_group_name, container_name=DATA_CONTAINER_NAME)
             self.model_container_client = get_container_client(resource_group_name=resource_group_name, container_name=MODEL_CONTAINER_NAME)
@@ -341,9 +353,9 @@ class ExplainModelContext:
                                                         ml_type=self.ml_type
                                                         )
         if self.api_upload:
-            asyncio.run(_upload_files_async(
+            asyncio.run(_upload_blobs_async(
                                             data_container_client=self.data_container_client,
-                                            model_container_client=self.fsc,
+                                            model_container_client=self.model_container_client,
                                             directory_name=self.directory_name,
                                             X=self.X,
                                             y=self.y,
@@ -356,7 +368,7 @@ class ExplainModelContext:
 
         else:
             asyncio.run(_upload_blobs_async(data_container_client=self.data_container_client,
-                                            model_container_client=self.fsc,
+                                            model_container_client=self.model_container_client,
                                             directory_name=self.directory_name,
                                             X=self.X,
                                             y=self.y,

@@ -117,6 +117,7 @@ def get_file_system_client_from_account(resource_group_name: str | None) -> File
     return file_system_client
 
 async def _upload_create_folder_files_async(container_client, directory_name, data, file_name):
+    """Upload data to a file in a directory, creating the directory if it does not exist. Currently unused."""
     directory_client = get_or_create_folders_recursively(directory_name, container_client)
     file_client = directory_client.get_file_client(file_name)
     file_client.upload_data(data, overwrite=True, encoding='utf-8')
@@ -136,6 +137,7 @@ async def _upload_files_async(data_container_client,
                               baseline_data=None,
                               observation_id_column=None,
                               ):
+    """Currently unused."""
     jobs = [_upload_create_folder_files_async(container_client=data_container_client, directory_name=directory_name, file_name="data.pickle", data=pickle.dumps((X, y))),
             ]
     if run_metadata["run_mode"] == "training":
@@ -352,33 +354,19 @@ class ExplainModelContext:
                                                         model_hash=model_hash,
                                                         ml_type=self.ml_type
                                                         )
-        if self.api_upload:
-            asyncio.run(_upload_blobs_async(
-                                            data_container_client=self.data_container_client,
-                                            model_container_client=self.model_container_client,
-                                            directory_name=self.directory_name,
-                                            X=self.X,
-                                            y=self.y,
-                                            baseline_data=self.baseline_data,
-                                            dumped_model=dumped_model,
-                                            model_metadata=self.model_metadata,
-                                            run_metadata=self.run_metadata,
-                                            observation_id_column=self.observation_id_column
-                                            ))
+        asyncio.run(_upload_blobs_async(
+                                        data_container_client=self.data_container_client,
+                                        model_container_client=self.model_container_client,
+                                        directory_name=self.directory_name,
+                                        X=self.X,
+                                        y=self.y,
+                                        baseline_data=self.baseline_data,
+                                        dumped_model=dumped_model,
+                                        model_metadata=self.model_metadata,
+                                        run_metadata=self.run_metadata,
+                                        observation_id_column=self.observation_id_column
+                                        ))
 
-        else:
-            asyncio.run(_upload_blobs_async(data_container_client=self.data_container_client,
-                                            model_container_client=self.model_container_client,
-                                            directory_name=self.directory_name,
-                                            X=self.X,
-                                            y=self.y,
-                                            baseline_data=self.baseline_data,
-                                            dumped_model=dumped_model,
-                                            model_metadata=self.model_metadata,
-                                            run_metadata=self.run_metadata,
-                                            observation_id_column=self.observation_id_column
-                                            )
-                        )
 
 def explain(model,
             X: Union["pandas.DataFrame", "numpy.ndarray"],

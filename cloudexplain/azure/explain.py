@@ -3,19 +3,22 @@ from azure.mgmt.resource import SubscriptionClient, ResourceManagementClient
 from azure.mgmt.storage import StorageManagementClient
 from azure.storage.blob import BlobServiceClient
 from azure.storage.filedatalake import FileSystemClient
+from azure.storage.filedatalake import DataLakeServiceClient
 from cloudexplain.create_model_metadata import create_model_metadata
 import uuid
 import pickle
 import json
 import asyncio
 import threading
-from typing import Any, Union, Optional, Tuple
+from typing import Union, Optional
 import logging
 import hashlib
 import uuid
+import requests
 from cloudexplain.azure.utils import get_or_create_folders_recursively
 from typing import Literal
 from enum import Enum
+import os
 
 credentials = AzureCliCredential()
 
@@ -114,12 +117,46 @@ def get_file_system_client_from_account(resource_group_name: str | None) -> File
     return file_system_client
 
 async def _upload_create_folder_files_async(container_client, directory_name, data, file_name):
+    """Upload data to a file in a directory, creating the directory if it does not exist. Currently unused."""
     directory_client = get_or_create_folders_recursively(directory_name, container_client)
     file_client = directory_client.get_file_client(file_name)
     file_client.upload_data(data, overwrite=True, encoding='utf-8')
 
-async def _upload_files_async(container_client, directory_name, data, file_name):
+
+async def _upload_blob_async(container_client, directory_name, data, file_name):
     container_client.upload_blob(f"{directory_name}/{file_name}", data, overwrite=True, encoding='utf-8')
+
+async def _upload_files_async(data_container_client,
+                              model_container_client,
+                              directory_name,
+                              X,
+                              dumped_model,
+                              model_metadata: Optional[dict],
+                              run_metadata,
+                              y=None,
+                              baseline_data=None,
+                              observation_id_column=None,
+                              ):
+    """Currently unused."""
+    jobs = [_upload_create_folder_files_async(container_client=data_container_client, directory_name=directory_name, file_name="data.pickle", data=pickle.dumps((X, y))),
+            ]
+    if run_metadata["run_mode"] == "training":
+        model_name = model_metadata["model_name"]
+        model_version = model_metadata["model_version"]
+        jobs.extend([_upload_create_folder_files_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model.pickle", data=dumped_model),
+                     _upload_create_folder_files_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model_metadata.json", data=json.dumps(model_metadata, ensure_ascii=False))
+                     ]
+                    )
+    if observation_id_column is not None:
+        jobs.append(_upload_create_folder_files_async(container_client=data_container_client, directory_name=directory_name, file_name="observation_id_column.pickle", data=pickle.dumps(observation_id_column)))
+    if baseline_data is not None:
+        jobs.append(_upload_create_folder_files_async(container_client=data_container_client, directory_name=directory_name, file_name="baseline_data.pickle", data=pickle.dumps(baseline_data)))
+
+    await asyncio.gather(
+        *jobs
+    )
+    await _upload_create_folder_files_async(container_client=data_container_client, directory_name=directory_name, file_name="run_metadata.json", data=json.dumps(run_metadata, ensure_ascii=False))
+
 
 async def _upload_blobs_async(data_container_client,
                               model_container_client,
@@ -132,29 +169,45 @@ async def _upload_blobs_async(data_container_client,
                               baseline_data=None,
                               observation_id_column=None,
                               ):
-    jobs = [_upload_files_async(container_client=data_container_client, directory_name=directory_name, file_name="data.pickle", data=pickle.dumps((X, y))),
+    jobs = [_upload_blob_async(container_client=data_container_client, directory_name=directory_name, file_name="data.pickle", data=pickle.dumps((X, y))),
             ]
     if run_metadata["run_mode"] == "training":
         model_name = model_metadata["model_name"]
         model_version = model_metadata["model_version"]
-        jobs.extend([_upload_create_folder_files_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model.pickle", data=dumped_model),
-                     _upload_create_folder_files_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model_metadata.json", data=json.dumps(model_metadata, ensure_ascii=False))
+        jobs.extend([_upload_blob_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model.pickle", data=dumped_model),
+                     _upload_blob_async(container_client=model_container_client, directory_name=f"{model_name}/{model_version}", file_name="model_metadata.json", data=json.dumps(model_metadata, ensure_ascii=False))
                      ]
                     )
     if observation_id_column is not None:
-        jobs.append(_upload_files_async(container_client=data_container_client, directory_name=directory_name, file_name="observation_id_column.pickle", data=pickle.dumps(observation_id_column)))
+        jobs.append(_upload_blob_async(container_client=data_container_client, directory_name=directory_name, file_name="observation_id_column.pickle", data=pickle.dumps(observation_id_column)))
     if baseline_data is not None:
-        jobs.append(_upload_files_async(container_client=data_container_client, directory_name=directory_name, file_name="baseline_data.pickle", data=pickle.dumps(baseline_data)))
+        jobs.append(_upload_blob_async(container_client=data_container_client, directory_name=directory_name, file_name="baseline_data.pickle", data=pickle.dumps(baseline_data)))
 
     await asyncio.gather(
         *jobs
     )
-    await _upload_files_async(container_client=data_container_client, directory_name=directory_name, file_name="run_metadata.json", data=json.dumps(run_metadata, ensure_ascii=False))
+    await _upload_blob_async(container_client=data_container_client, directory_name=directory_name, file_name="run_metadata.json", data=json.dumps(run_metadata, ensure_ascii=False))
 
 def list_sub_directories(directory_client):
     sub_directories = [path.name for path in directory_client.get_paths() if path.is_directory]
     return sub_directories
 
+def get_container_client_from_sas(sas_url: str, container_name: str) -> BlobServiceClient:
+    """Get a container client from a SAS URL."""
+    # Convert Data Lake SAS URL to Blob Storage SAS URL
+    sas_url = sas_url.replace('.dfs.core.windows.net', '.blob.core.windows.net')
+
+    blob_service_client = BlobServiceClient(account_url=sas_url, credential=None)
+    return blob_service_client.get_container_client(container_name)
+
+def get_file_system_client_from_sas(sas_url: str, container_name: str) -> FileSystemClient:
+    """Get a file system client from a SAS URL for Data Lake operations."""
+    # Ensure we're using the Data Lake endpoint
+    if '.blob.core.windows.net' in sas_url:
+        sas_url = sas_url.replace('.blob.core.windows.net', '.dfs.core.windows.net')
+    
+    datalake_service_client = DataLakeServiceClient(account_url=sas_url, credential=None)
+    return datalake_service_client.get_file_system_client(container_name)
 
 class ExplainModelContext:
     def __init__(self,
@@ -182,12 +235,20 @@ class ExplainModelContext:
                  is_higher_output_better: Union[bool, tuple[bool]] = True,
                  feature_descriptions: Optional[dict[str, str]] = None,
                  baseline_data: Optional[Union["pandas.DataFrame", "numpy.ndarray"]] = None,
+                 function_url: Optional[str] = None,
+                 api_token: Optional[str] = None,
                  ):
         try:
             if isinstance(ml_type, str):
                 ml_type = MLType(ml_type)
         except ValueError as e:
             raise ValueError(f"ml_type must be one of {', '.join([ml_type.value for ml_type in MLType])}.") from e
+        if resource_group_name is None:
+            self.api_token = api_token or os.environ["CLOUDEXPLAIN_API_TOKEN"]
+            self.function_url = function_url or os.environ["CLOUDEXPLAIN_FUNCTION_URL"]
+            self.api_upload = True
+        else:
+            self.api_upload = False
         self.model = model
         self.X = X
         self.y = y
@@ -211,10 +272,25 @@ class ExplainModelContext:
         self.baseline_data = baseline_data
 
         # get container clients -> todo: use file clients instead
-        self.data_container_client = get_container_client(resource_group_name=resource_group_name, container_name=DATA_CONTAINER_NAME)
-        self.model_container_client = get_container_client(resource_group_name=resource_group_name, container_name=MODEL_CONTAINER_NAME)
+        if self.api_upload:
+            response = requests.post(self.function_url, headers={"Content-Type": "application/json"}, json={"token": self.api_token})
+            response.raise_for_status()
+            
+            # Parse the JSON response correctly
+            response_data = response.json()
+            data_sas_url = response_data["data_sas_url"]
 
-        self.fsc = get_file_system_client_from_account(resource_group_name=resource_group_name)
+            self.data_container_client = get_container_client_from_sas(sas_url=data_sas_url, container_name=DATA_CONTAINER_NAME)
+            self.model_container_client = get_container_client_from_sas(sas_url=data_sas_url, container_name=MODEL_CONTAINER_NAME)
+            
+            # Create file system client from SAS URL for Data Lake operations
+            self.fsc = get_file_system_client_from_sas(sas_url=data_sas_url, container_name=MODEL_CONTAINER_NAME)
+        else:
+            self.data_container_client = get_container_client(resource_group_name=resource_group_name, container_name=DATA_CONTAINER_NAME)
+            self.model_container_client = get_container_client(resource_group_name=resource_group_name, container_name=MODEL_CONTAINER_NAME)
+            self.fsc = get_file_system_client_from_account(resource_group_name=resource_group_name)
+            
+        # Check model folder existence - this code remains the same for both paths
         model_folder_client = get_or_create_folders_recursively(f"{model_name}/{model_version}", self.fsc)
         if model_folder_client.get_file_client("model_metadata.json").exists() and y is not None:
             existing_versions = [int(version.name) for version in list_sub_directories(model_folder_client)]
@@ -278,8 +354,9 @@ class ExplainModelContext:
                                                         model_hash=model_hash,
                                                         ml_type=self.ml_type
                                                         )
-        asyncio.run(_upload_blobs_async(data_container_client=self.data_container_client,
-                                        model_container_client=self.fsc,
+        asyncio.run(_upload_blobs_async(
+                                        data_container_client=self.data_container_client,
+                                        model_container_client=self.model_container_client,
                                         directory_name=self.directory_name,
                                         X=self.X,
                                         y=self.y,
@@ -288,8 +365,8 @@ class ExplainModelContext:
                                         model_metadata=self.model_metadata,
                                         run_metadata=self.run_metadata,
                                         observation_id_column=self.observation_id_column
-                                        )
-                    )
+                                        ))
+
 
 def explain(model,
             X: Union["pandas.DataFrame", "numpy.ndarray"],
@@ -314,7 +391,9 @@ def explain(model,
             feature_units: dict[str, str] | None = None,
             is_higher_output_better: bool | tuple[bool] = True,
             feature_descriptions: dict[str, str] | None = None,
-            baseline_data: Optional[Union["pandas.DataFrame", "numpy.ndarray"]] = None) -> ExplainModelContext:
+            baseline_data: Optional[Union["pandas.DataFrame", "numpy.ndarray"]] = None,
+            function_url: Optional[str] = None,
+            api_token: Optional[str] = None) -> ExplainModelContext:
     """Upload the model, data, and metadata to the cloudexplaindata container asynchronously.
 
     Usage:
@@ -375,5 +454,7 @@ def explain(model,
                                feature_units=feature_units,
                                is_higher_output_better=is_higher_output_better,
                                feature_descriptions=feature_descriptions,
-                               baseline_data=baseline_data
+                               baseline_data=baseline_data,
+                               function_url=function_url,
+                               api_token=api_token,
     )
